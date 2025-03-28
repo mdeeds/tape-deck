@@ -1,0 +1,93 @@
+/* style.css */
+
+body {
+  background-color: #333;
+  /* Dark gray background, like a tape deck chassis */
+  color: #eee;
+  /* Light text for contrast */
+  font-family: monospace;
+  /* Monospace font for that techy feel */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  margin: 0;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+div.panel {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+h1 {
+  font-size: 2em;
+  text-align: center;
+  text-shadow: 1px 1px 2px #000;
+  /* Subtle text shadow for depth */
+  padding: 20px;
+  background-color: #555;
+  border: 2px solid #777;
+  border-radius: 10px;
+  box-shadow: 0px 5px 10px rgba(0, 0, 0, 0.5);
+}
+
+/* Control Panel Area */
+body>* {
+  background-color: #444;
+  border: 3px solid #666;
+  border-radius: 15px;
+  padding: 30px;
+  box-shadow: 0px 8px 15px rgba(0, 0, 0, 0.6);
+  position: relative;
+  z-index: 1;
+}
+
+/* Simulated Bolts */
+div.panel:before {
+  content: "";
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background-color: #999;
+  box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
+}
+
+div.panel:after {
+  content: "";
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background-color: #999;
+  box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
+}
+
+button:hover {
+  background-color: #88a;
+}
+
+button:active {
+  background-color: #66f;
+}
+
+/* Additional details for the tape deck look */
+body {
+  background-image: linear-gradient(to bottom, #222, #444);
+  /* Subtle gradient */
+}
+
+/* Add some texture */
+body {
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.05) 0%, transparent 40%),
+    linear-gradient(to bottom, #222, #444);
+  background-blend-mode: overlay;
+}
