@@ -257,6 +257,54 @@ class Monitor {
 
 }
 
+class VUMeter {
+  constructor(inputNode, div) {
+    this.audioContext = inputNode.context;
+    this.inputNode = inputNode;
+    this.div = div;
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = 50;
+    this.canvas.height = 50;
+    this.div.appendChild(this.canvas);
+
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 256;
+    this.inputNode.connect(this.analyser);
+    this.ctx = this.canvas.getContext('2d');
+    const bufferLength = this.analyser.frequencyBinCount;
+    this.vuArray = new Float32Array(bufferLength);
+    this.previousDb = -40;
+    this._drawCanvas();
+  }
+
+  _drawCanvas() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+    let amplitude = 0.0;
+    this.analyser.getFloatTimeDomainData(this.vuArray);
+    for (let i = 0; i < this.vuArray.length; i++) {
+      amplitude = Math.max(Math.abs(this.vuArray[i]), amplitude);
+    }
+    let dbs = -40;
+    if (amplitude > 0) {
+      dbs = Math.max(-40, 20 * Math.log10(amplitude));
+    }
+    dbs = Math.max(this.previousDb - 1, dbs);
+    this.previousDb = dbs;
+    const angle = (dbs + 40) / 80 * Math.PI / 3 - Math.PI / 3;
+    const radius = this.canvas.height * 0.9;
+    const x = this.canvas.width / 2 + Math.sin(angle) * radius;
+    const y = this.canvas.height - Math.cos(angle) * radius;
+    this.ctx.beginPath();
+    this.ctx.moveTo(this.canvas.width / 2, this.canvas.height);
+    this.ctx.lineTo(x, y);
+    this.ctx.strokeStyle = 'red';
+    this.ctx.stroke();
+    requestAnimationFrame(this._drawCanvas.bind(this));
+  }
+
+}
+
 class Main {
   constructor() {
     this.audioContext = new AudioContext();
@@ -299,7 +347,7 @@ class Main {
     div.style.width = '100px';
     div.style.height = '100px';
     div.style.margin = '5px';
-    div.innerHTML = 'R M S';;
+    div.innerHTML = 'R M S';
     return div;
   }
 
@@ -319,6 +367,7 @@ class Main {
     source.connect(this.tapeWorkletNode);
 
     new Monitor(source);
+    new VUMeter(source, document.body);
 
     this.tapeWorkletNode.connect(this.audioContext.destination);
 
