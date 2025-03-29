@@ -213,8 +213,54 @@ class Monitor {
   constructor(inputSource) {
     this.audioContext = inputSource.context;
 
-    inputSource.connect(this.audioContext.destination);
+    this.predelay = this.audioContext.createDelay(1.0);
+    this.predelay.delayTime.value = 0.05;
+    inputSource.connect(this.predelay);
 
+    const kernelSize = 0.1;
+    const halflife = 1.0;  // The halflife of the reverb in seconds.
+    const kernel = this._kernel(kernelSize, halflife);
+
+    this.convolver = this.audioContext.createConvolver();
+    this.convolver.buffer = kernel;
+    this.predelay.connect(this.convolver);
+    this.convolver.connect(this.audioContext.destination);
+
+    this.loopback = this.audioContext.createDelay(kernelSize);
+    this.loopback.delayTime.value = kernelSize;
+    this.predelay.connect(this.loopback);
+
+    this.loopbackGain = this.audioContext.createGain();
+
+    // g ^ (haflife / kernelSize) = 0.5
+    // (haflife / kernelSize) ln g = ln(0.5)
+    // ln g = ln(0.5) / (halflife / kernelSize)
+    // g = exp(ln(0.5) / (halflife / kernelSize))
+    // g = pow(0.5, (halflife / kernelSize))
+    this.loopbackGain.gain.value = Math.pow(0.5, kernelSize / halflife);
+
+    this.loopback.connect(this.loopbackGain);
+    this.loopbackGain.connect(this.convolver);
+    this.loopbackGain.connect(this.loopback);
+  }
+
+  // Returns an AudioBuffer filled with noise of the specified duration.
+  _kernel(durationSeconds, halflife) {
+    const sampleRate = this.audioContext.sampleRate;
+    const frameCount = Math.round(sampleRate * durationSeconds);
+    const buffer = this.audioContext.createBuffer(1, frameCount, sampleRate);
+    const channelData = buffer.getChannelData(0);
+    for (let i = 0; i < frameCount; i++) {
+      const t = i / sampleRate;
+      const g = Math.pow(0.5, t / halflife);
+      // channelData[i] = Math.random() * 2 - 1;
+      if (Math.random() < 0.01) {
+        channelData[i] = 0.1 * g * (2 * Math.random() - 1);
+      } else {
+        channelData[i] = 0;
+      }
+    }
+    return buffer;
   }
 }
 
