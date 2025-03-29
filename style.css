@@ -70,12 +70,29 @@ div.panel:after {
   box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.8);
 }
 
+button {
+  padding: 20px 40px;
+  font-size: 1.5em;
+  margin: 10px;
+  background-color: #666;
+  color: #eee;
+  border: 2px solid #888;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0px 1em 2em rgba(0, 0, 0, 0.6);
+  font-family: monospace;
+}
+
 button:hover {
   background-color: #88a;
 }
 
 button:active {
   background-color: #66f;
+}
+
+button.down {
+  background-color: #822;
 }
 
 /* Additional details for the tape deck look */
