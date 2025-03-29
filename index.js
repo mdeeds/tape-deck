@@ -9,59 +9,6 @@ function createButton(text, id, buttonContainer) {
   return button;
 }
 
-class AudioTrack {
-  constructor(audioContext, audioBuffer, startTime) {
-    this.audioContext = audioContext;
-    this.audioBuffer = audioBuffer;
-    this.startTime = startTime;
-    this.endTime = startTime + audioBuffer.duration;
-    this.duration = audioBuffer.duration;
-  }
-
-  // Starts playback at the specified tape time.
-  play(tapeTime) {
-    const startTime = this.startTime - tapeTime;
-    if (startTime >= this.endTime) {
-      // Nothing to do, the track is entirely in the past.
-      return;
-    }
-    this.source = this.audioContext.createBufferSource();
-    source.buffer = this.audioBuffer;
-    source.connect(this.audioContext.destination);
-    if (startTime >= 0) {
-      source.start(startTime);
-    } else {
-      source.start(0, -startTime);
-    }
-  }
-
-  stop() {
-    this.source.stop();
-    this.source.disconnect();
-  }
-}
-
-class TapeDeck {
-  constructor() {
-    this.tapeTime = 0;
-    this.tracks = [];
-  }
-
-  // Starts playback at current tapeTime.
-  play() {
-    for (const track of this.tracks) {
-      track.play(this.tapeTime);
-
-    }
-  }
-
-  stop() {
-    for (const track of this.tracks) {
-      track.stop();
-    }
-  }
-}
-
 class CanvasCircle extends EventTarget {
   constructor(container) {
     super();
@@ -208,7 +155,6 @@ class CanvasCircle extends EventTarget {
   }
 }
 
-
 class Monitor {
   constructor(inputSource) {
     this.audioContext = inputSource.context;
@@ -264,7 +210,6 @@ class Monitor {
   }
 }
 
-
 class Main {
   constructor() {
     this.audioContext = new AudioContext();
@@ -294,17 +239,21 @@ class Main {
 
     // Create 16 img elements and add them to the container
     for (let i = 0; i < 16; i++) {
-      const img = document.createElement('img');
-      img.src = 'vu.jpg'; // Replace with your track image if needed
-      img.style.width = '100px'; // Adjust as needed
-      img.style.height = '100px'; // Adjust as needed
-      img.style.margin = '5px';
-      tracksContainer.appendChild(img);
+      const trackElement = this._createTrack();
+      tracksContainer.appendChild(trackElement);
     }
   }
 
+  _createTrack() {
+    const div = document.createElement('div');
+    div.style.width = '100px';
+    div.style.height = '100px';
+    div.style.margin = '5px';
+    div.innerHTML = 'R M S';;
+    return div;
+  }
+
   async _initAudio() {
-    this.tapeDeck = new TapeDeck();
     await this.audioContext.audioWorklet.addModule('tape-worklet.js');
 
     this.tapeWorkletNode = new AudioWorkletNode(this.audioContext, 'tape-worklet-processor');
@@ -348,6 +297,7 @@ class Main {
       const nowTime = this.audioContext.currentTime;
       t.cancelScheduledValues(nowTime);
       t.value = 0;
+      playButton.classList.remove('down');
     });
     const leftReel = document.getElementById('leftReel');
     const leftReelCanvasCircle = new CanvasCircle(leftReel);
@@ -370,7 +320,7 @@ class Main {
 }
 
 function init() {
-  const main = new Main();
   const startButton = document.getElementById('start');
   startButton.remove();
+  const main = new Main();
 }
