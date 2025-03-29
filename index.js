@@ -50,32 +50,6 @@ class CanvasCircle extends EventTarget {
     return { dx: x - this.centerX, dy: y - this.centerY };
   }
 
-  drawReel() {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    this.ctx.fillStyle = 'grey';
-    this.ctx.beginPath();
-    this.ctx.arc(this.centerX, this.centerY, this.radius, 0, 2 * Math.PI);
-    this.ctx.fill();
-
-    const holeRadius = this.radius / 4;
-    const holeCenterRadius = this.radius * 0.75;
-    for (let i = 0; i < 4; i++) {
-      const angle = i * Math.PI / 2;
-      const holeCenterX = this.centerX + holeCenterRadius * Math.cos(angle);
-      const holeCenterY = this.centerY + holeCenterRadius * Math.sin(angle);
-      this.ctx.beginPath();
-      this.ctx.arc(holeCenterX, holeCenterY, holeRadius, 0, 2 * Math.PI);
-      this.ctx.fillStyle = 'white';
-      this.ctx.fill();
-    }
-
-    this.ctx.beginPath();
-    this.ctx.arc(this.centerX, this.centerY, this.radius / 4, 0, 2 * Math.PI);
-    this.ctx.fillStyle = 'black';
-    this.ctx.fill();
-  }
-
-
   drawImage() {
     this.ctx.save();
     this.ctx.translate(this.centerX, this.centerY);
@@ -86,6 +60,10 @@ class CanvasCircle extends EventTarget {
     this.ctx.arc(this.circleX, this.circleY, 5, 0, 2 * Math.PI);
     this.ctx.fillStyle = 'red';
     this.ctx.fill();
+    this.ctx.fillStyle = 'white';
+    const tapeTime = this.totalRadiansMoved / (3.0 * 2.0 * Math.PI);
+    this.ctx.fillText(`${Math.round(tapeTime * 100) / 100}`,
+      this.centerX, this.centerY);
   }
 
   handleMouseDown(event) {
@@ -120,6 +98,7 @@ class CanvasCircle extends EventTarget {
         deltaAngle += 2 * Math.PI;
       }
       this.totalRadiansMoved += deltaAngle;
+      this.totalRadiansMoved = Math.max(0, this.totalRadiansMoved);
       this._dispatchTapeTime();
     }
   }
@@ -142,11 +121,12 @@ class CanvasCircle extends EventTarget {
     const reelMovedEvent = new CustomEvent('reelMoved', {
       detail: { tapeTime: smoothedTapeTime }
     });
-    this.canvas.dispatchEvent(reelMovedEvent);
+    this.dispatchEvent(reelMovedEvent);
   }
 
   setTapeTime(tapeTime) {
     this.totalRadiansMoved = tapeTime / 3.0 * 2.0 * Math.PI;
+    this.lastDispatchTime = tapeTime;
     this.drawImage();
   }
 
@@ -168,6 +148,8 @@ class Monitor {
     const kernel = this._kernel(kernelSize, halflife);
 
     this.convolver = this.audioContext.createConvolver();
+    // Important: turn off normalization so we don't get a ringing effect.
+    this.convolver.normalize = false;
     this.convolver.buffer = kernel;
     this.predelay.connect(this.convolver);
     this.convolver.connect(this.audioContext.destination);
@@ -237,6 +219,9 @@ class Main {
     tracksContainer.style.flexWrap = 'wrap';
     tracksContainer.style.width = '900px'; // Adjust as needed
 
+    this.leftReel = document.getElementById('leftReel');
+    this.leftReelCanvasCircle = new CanvasCircle(leftReel);
+
     // Create 16 img elements and add them to the container
     for (let i = 0; i < 16; i++) {
       const trackElement = this._createTrack();
@@ -258,7 +243,13 @@ class Main {
 
     this.tapeWorkletNode = new AudioWorkletNode(this.audioContext, 'tape-worklet-processor');
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        autoGainControl: false,
+        echoCancelation: false,
+        noiseSuppresion: false,
+      }
+    });
     const source = this.audioContext.createMediaStreamSource(stream);
     source.connect(this.tapeWorkletNode);
 
@@ -280,6 +271,7 @@ class Main {
       if (this.motorEngaged) {
         const oldValue = t.value;
         t.linearRampToValueAtTime(oldValue + 120, nowTime + 120);
+        this._updateReel();
       }
     });
     const recordButton = document.getElementById('recordButton');
@@ -294,28 +286,41 @@ class Main {
     const stopButton = document.getElementById('stopButton');
     stopButton.addEventListener('click', () => {
       const t = this.tapeWorkletNode.parameters.get('t');
-      const nowTime = this.audioContext.currentTime;
-      t.cancelScheduledValues(nowTime);
       t.value = 0;
-      playButton.classList.remove('down');
+      this.leftReelCanvasCircle.setTapeTime(0);
+      this._stopMotor();
     });
-    const leftReel = document.getElementById('leftReel');
-    const leftReelCanvasCircle = new CanvasCircle(leftReel);
-    leftReelCanvasCircle.canvas.addEventListener('reelMoved', (event) => {
+    this.leftReelCanvasCircle.addEventListener('reelMoved', (event) => {
       const t = this.tapeWorkletNode.parameters.get('t');
+      const nowTime = this.audioContext.currentTime;
       if (this.motorEngaged) {
-        playButton.classList.remove('down');
-        this.motorEngaged = false;
-        t.cancelScheduledValues(nowTime);
+        this._stopMotor();
+
       }
       const tapeTime = event.detail.tapeTime;
       const oldValue = t.value;
       if (Math.abs(oldValue - tapeTime) > 0.1) {
-        const nowTime = this.audioContext.currentTime;
         t.linearRampToValueAtTime(tapeTime, nowTime + Math.abs(oldValue - tapeTime));
         // console.log(`Ramp to ${tapeTime}`);
       }
     });
+  }
+
+  _updateReel() {
+    if (this.motorEngaged) {
+      const t = this.tapeWorkletNode.parameters.get('t');
+      this.leftReelCanvasCircle.setTapeTime(t.value);
+      requestAnimationFrame(this._updateReel.bind(this));
+    }
+  }
+
+  _stopMotor() {
+    const t = this.tapeWorkletNode.parameters.get('t');
+    const nowTime = this.audioContext.currentTime;
+    t.cancelScheduledValues(nowTime);
+    playButton.classList.remove('down');
+    this.motorEngaged = false;
+    t.cancelScheduledValues(nowTime);
   }
 }
 
