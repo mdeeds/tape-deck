@@ -304,8 +304,9 @@ class VUMeter {
   }
 }
 
-class Track {
+class Track extends EventTarget {
   constructor(container, source) {
+    super();
     this.container = container;
     this.audioContext = source.context;
     this.tapeWorkletNode = new AudioWorkletNode(
@@ -317,15 +318,36 @@ class Track {
     };
     this.tapeWorkletNode.port.postMessage({ type: 'play' });
 
+    this.div = document.createElement('div');
+    this.div.style.width = '100px';
+    this.div.style.height = '100px';
+    this.div.style.margin = '5px';
+    this.div.innerHTML = 'R M S';
+    container.appendChild(this.div);
 
-    const div = document.createElement('div');
-    div.style.width = '100px';
-    div.style.height = '100px';
-    div.style.margin = '5px';
-    div.innerHTML = 'R M S';
-    container.appendChild(div);
+    this.div.addEventListener('click', (event) => {
+      if (this.div.classList.contains('armed')) {
+        this.disarm();
+      } else {
+        this.dispatchEvent(new CustomEvent('armed'));
+        this.arm();
+      }
+    });
   }
 
+  arm() {
+    if (!this.div.classList.contains('armed')) {
+      this.div.classList.add('armed');
+      this.tapeWorkletNode.port.postMessage({ type: 'record' });
+    }
+  }
+
+  disarm() {
+    if (this.div.classList.contains('armed')) {
+      this.div.classList.remove('armed');
+      this.tapeWorkletNode.port.postMessage({ type: 'play' });
+    }
+  }
   getTapeTime() {
     const t = this.tapeWorkletNode.parameters.get('t');
     return t.value;
@@ -359,7 +381,15 @@ class TrackManager {
     this.motorEngaged = false;
 
     for (let i = 0; i < trackCount; i++) {
-      this.tracks.push(new Track(container, source));
+      const track = new Track(container, source);
+      this.tracks.push(track);
+      track.addEventListener('armed', (event) => {
+        for (const t of this.tracks) {
+          if (t !== event.target) {
+            t.disarm();
+          }
+        }
+      });
     }
 
     this._updateReel();
