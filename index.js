@@ -38,7 +38,8 @@ class CanvasCircle extends EventTarget {
     this.canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
     // this.canvas.addEventListener('mouseout', this.handleMouseUp.bind(this));
 
-    this.totalRadiansMoved = 0;
+    this.reelRadians = 0;
+    this.fingerRadians = 0;
     this.lastDispatchTime = window.performance.now();
   }
 
@@ -52,7 +53,7 @@ class CanvasCircle extends EventTarget {
   drawImage() {
     this.ctx.save();
     this.ctx.translate(this.centerX, this.centerY);
-    this.ctx.rotate(this.totalRadiansMoved);
+    this.ctx.rotate(this.reelRadians);
     this.ctx.drawImage(this.image, -this.canvas.width / 2, -this.canvas.height / 2, this.canvas.width, this.canvas.height);
     this.ctx.restore();
     this.ctx.beginPath();
@@ -60,7 +61,7 @@ class CanvasCircle extends EventTarget {
     this.ctx.fillStyle = 'red';
     this.ctx.fill();
     this.ctx.fillStyle = 'white';
-    const tapeTime = this.totalRadiansMoved * 3.0 / (2.0 * Math.PI);
+    const tapeTime = this.reelRadians * 3.0 / (2.0 * Math.PI);
     this.ctx.fillText(`${Math.round(tapeTime * 100) / 100}`,
       this.centerX, this.centerY);
   }
@@ -71,6 +72,7 @@ class CanvasCircle extends EventTarget {
     const distance = Math.sqrt(dx * dx + dy * dy);
     this.circleX = this.centerX + dx;
     this.circleY = this.centerY + dy;
+    this.fingerRadians = this.reelRadians;
 
     if (distance <= this.radius) {
       console.log('dragging')
@@ -98,8 +100,7 @@ class CanvasCircle extends EventTarget {
       } else if (deltaAngle < -Math.PI) {
         deltaAngle += 2 * Math.PI;
       }
-      this.totalRadiansMoved += deltaAngle;
-      this.totalRadiansMoved = Math.max(0, this.totalRadiansMoved);
+      this.fingerRadians += deltaAngle;
       this._dispatchTapeTime();
     }
   }
@@ -107,7 +108,7 @@ class CanvasCircle extends EventTarget {
   _dispatchTapeTime() {
     const newDispatchTime = window.performance.now();
     const deltaTime = newDispatchTime - this.lastDispatchTime;
-    if (deltaTime < 0.5) {
+    if (deltaTime < 0.05) {
       // Don't send updates too frequently.
       return;
     }
@@ -115,7 +116,8 @@ class CanvasCircle extends EventTarget {
     // Typical reel sizes are 7, 10.5, and 14 inches
     // Typical tape speeds are 3.75, 7.5, 15, and 30 inches per second
     // Assuming 7" reel and 7.5 inches per second, gives us about 3 seconds per rotation.
-    const tapeTime = 3.0 * (this.totalRadiansMoved / 2.0 / Math.PI);
+    let tapeTime = 3.0 * (this.fingerRadians / 2.0 / Math.PI);
+    tapeTime = Math.max(0, tapeTime);
     this.lastDispatchTime = newDispatchTime;
     const reelMovedEvent = new CustomEvent('reelMoved', {
       detail: { tapeTime }
@@ -124,8 +126,7 @@ class CanvasCircle extends EventTarget {
   }
 
   setTapeTime(tapeTime) {
-    this.totalRadiansMoved = tapeTime / 3.0 * 2.0 * Math.PI;
-    this.lastDispatchTime = tapeTime;
+    this.reelRadians = tapeTime / 3.0 * 2.0 * Math.PI;
     this.drawImage();
   }
 
@@ -301,59 +302,142 @@ class VUMeter {
     this.ctx.stroke();
     requestAnimationFrame(this._drawCanvas.bind(this));
   }
+}
 
+class Track {
+  constructor(container, source) {
+    this.container = container;
+    this.audioContext = source.context;
+    this.tapeWorkletNode = new AudioWorkletNode(
+      this.audioContext, 'tape-worklet-processor');
+    this.tapeWorkletNode.connect(this.audioContext.destination);
+    source.connect(this.tapeWorkletNode);
+    this.tapeWorkletNode.port.onmessage = (event) => {
+      console.log('message from worklet', event.data);
+    };
+    this.tapeWorkletNode.port.postMessage({ type: 'play' });
+
+
+    const div = document.createElement('div');
+    div.style.width = '100px';
+    div.style.height = '100px';
+    div.style.margin = '5px';
+    div.innerHTML = 'R M S';
+    container.appendChild(div);
+  }
+
+  getTapeTime() {
+    const t = this.tapeWorkletNode.parameters.get('t');
+    return t.value;
+  }
+
+  setTapeTime(tapeTime) {
+    this.tapeWorkletNode.parameters.get('t')
+      .linearRampToValueAtTime(tapeTime, this.audioContext.currentTime + 0.1);
+  }
+
+  forward(nowTime, tapeTime) {
+    const t = this.tapeWorkletNode.parameters.get('t');
+    t.cancelScheduledValues(nowTime);
+    t.value = tapeTime;
+    t.linearRampToValueAtTime(t.value + 120, nowTime + 120);
+  }
+
+  stop(tapeTime) {
+    const t = this.tapeWorkletNode.parameters.get('t');
+    t.cancelScheduledValues(this.audioContext.currentTime);
+    t.value = tapeTime;
+  }
+}
+
+class TrackManager {
+  constructor(trackCount, reel, container, source) {
+    this.tracks = [];
+    this.reel = reel;
+    this.audioContext = source.context;
+
+    this.motorEngaged = false;
+
+    for (let i = 0; i < trackCount; i++) {
+      this.tracks.push(new Track(container, source));
+    }
+
+    this._updateReel();
+
+    reel.addEventListener('reelMoved', (event) => {
+      const oldValue = this.tracks[0].getTapeTime();
+      const nowTime = this.audioContext.currentTime;
+      const tapeTime = event.detail.tapeTime;
+      if (this.motorEngaged) {
+        this._stopAllTracks(tapeTime, nowTime);
+      }
+      if (Math.abs(oldValue - tapeTime) > 0.02) {
+        for (const track of this.tracks) {
+          track.setTapeTime(tapeTime);
+        };
+      }
+    });
+
+    const playButton = document.getElementById('playButton');
+    playButton.addEventListener('click', () => {
+      playButton.classList.toggle('down');
+      this.motorEngaged = playButton.classList.contains('down');
+
+      const tapeTime = this.tracks[0].getTapeTime();
+      const nowTime = this.audioContext.currentTime;
+      if (this.motorEngaged) {
+        this._startAllTracks(tapeTime, nowTime);
+      } else {
+        this._stopAllTracks(tapeTime, nowTime)
+      }
+    });
+  }
+
+  _stopAllTracks(tapeTime, nowTime) {
+    for (const track of this.tracks) {
+      track.stop(tapeTime);
+    }
+    this.motorEngaged = false;
+  }
+
+  _startAllTracks(tapeTime, nowTime) {
+    for (const track of this.tracks) {
+      track.forward(nowTime, tapeTime);
+    }
+    this.motorEngaged = true;
+  }
+
+  _updateReel() {
+    this.reel.setTapeTime(this.tracks[0].getTapeTime());
+    requestAnimationFrame(this._updateReel.bind(this));
+  }
 }
 
 class Main {
   constructor() {
     this.audioContext = new AudioContext();
     this._init();
-
-    this._initAudio();
-
-    this.motorEngaged = false;
   }
 
-  _init() {
+  async _init() {
     // Create a container for the buttons
     const buttonContainer = document.getElementById('buttons');
 
     // Create the buttons
     const stopButton = createButton('Stop', 'stopButton', buttonContainer);
-    const recordButton = createButton('Record', 'recordButton', buttonContainer);
     const playButton = createButton('Play', 'playButton', buttonContainer);
     // Append the container to the body
     document.body.appendChild(buttonContainer);
 
-    // Create a container for the track images
-    const tracksContainer = document.getElementById('tracks');
-    tracksContainer.style.display = 'flex';
-    tracksContainer.style.flexWrap = 'wrap';
-    tracksContainer.style.width = '900px'; // Adjust as needed
-
-    this.leftReel = document.getElementById('leftReel');
+    const leftReel = document.getElementById('leftReel');
     this.leftReelCanvasCircle = new CanvasCircle(leftReel);
 
-    // Create 16 img elements and add them to the container
-    for (let i = 0; i < 16; i++) {
-      const trackElement = this._createTrack();
-      tracksContainer.appendChild(trackElement);
-    }
-  }
-
-  _createTrack() {
-    const div = document.createElement('div');
-    div.style.width = '100px';
-    div.style.height = '100px';
-    div.style.margin = '5px';
-    div.innerHTML = 'R M S';
-    return div;
+    await this._initAudio();
+    this._createTracks();
   }
 
   async _initAudio() {
     await this.audioContext.audioWorklet.addModule('tape-worklet.js');
-
-    this.tapeWorkletNode = new AudioWorkletNode(this.audioContext, 'tape-worklet-processor');
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -364,78 +448,19 @@ class Main {
         latencyHint: 'low',
       }
     });
-    const source = this.audioContext.createMediaStreamSource(stream);
-    source.connect(this.tapeWorkletNode);
+    this.source = this.audioContext.createMediaStreamSource(stream);
 
-    new Monitor(source);
-    new VUMeter(source, document.body);
-
-    this.tapeWorkletNode.connect(this.audioContext.destination);
-
-    this.tapeWorkletNode.port.onmessage = (event) => {
-      console.log('message from worklet', event.data);
-    };
-    this.tapeWorkletNode.port.postMessage({ type: 'play' });
-    const playButton = document.getElementById('playButton');
-    playButton.addEventListener('click', () => {
-      playButton.classList.toggle('down');
-      this.motorEngaged = playButton.classList.contains('down');
-      const t = this.tapeWorkletNode.parameters.get('t');
-      const nowTime = this.audioContext.currentTime;
-      t.cancelScheduledValues(nowTime);
-      if (this.motorEngaged) {
-        const oldValue = t.value;
-        t.linearRampToValueAtTime(oldValue + 120, nowTime + 120);
-        this._updateReel();
-      }
-    });
-    const recordButton = document.getElementById('recordButton');
-    recordButton.addEventListener('click', () => {
-      recordButton.classList.toggle('down');
-      if (recordButton.classList.contains('down')) {
-        this.tapeWorkletNode.port.postMessage({ type: 'record' });
-      } else {
-        this.tapeWorkletNode.port.postMessage({ type: 'play' });
-      }
-    });
-    const stopButton = document.getElementById('stopButton');
-    stopButton.addEventListener('click', () => {
-      const t = this.tapeWorkletNode.parameters.get('t');
-      t.value = 0;
-      this.leftReelCanvasCircle.setTapeTime(0);
-      this._stopMotor();
-    });
-    this.leftReelCanvasCircle.addEventListener('reelMoved', (event) => {
-      const t = this.tapeWorkletNode.parameters.get('t');
-      const nowTime = this.audioContext.currentTime;
-      if (this.motorEngaged) {
-        this._stopMotor();
-
-      }
-      const tapeTime = event.detail.tapeTime;
-      const oldValue = t.value;
-      if (Math.abs(oldValue - tapeTime) > 0.1) {
-        t.linearRampToValueAtTime(tapeTime, nowTime + 0.5);
-        // console.log(`Ramp to ${tapeTime}`);
-      }
-    });
+    new Monitor(this.source);
+    new VUMeter(this.source, document.body);
   }
 
-  _updateReel() {
-    if (this.motorEngaged) {
-      const t = this.tapeWorkletNode.parameters.get('t');
-      this.leftReelCanvasCircle.setTapeTime(t.value);
-      requestAnimationFrame(this._updateReel.bind(this));
-    }
-  }
-
-  _stopMotor() {
-    const t = this.tapeWorkletNode.parameters.get('t');
-    const nowTime = this.audioContext.currentTime;
-    t.cancelScheduledValues(nowTime);
-    playButton.classList.remove('down');
-    this.motorEngaged = false;
-    t.cancelScheduledValues(nowTime);
+  _createTracks() {
+    // Create a container for the track images
+    const tracksContainer = document.getElementById('tracks');
+    tracksContainer.style.display = 'flex';
+    tracksContainer.style.flexWrap = 'wrap';
+    tracksContainer.style.width = '900px'; // Adjust as needed
+    this.tracks = new TrackManager(14, this.leftReelCanvasCircle, tracksContainer, this.source);
   }
 }
 
