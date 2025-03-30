@@ -86,10 +86,11 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
     if (currentTime - this.lastReportTime > 1) {
       this.lastReportTime = currentTime;
       const startValue = ts[0];
-      const endTime = ts[ts.length - 1];
-      const duration = endTime - startValue;
-      const ratio = duration / (127 / this.sampleRate);
-      console.log(`Ratio: ${ratio}`);
+      const endValue = ts[ts.length - 1];
+      const duration = endValue - startValue;
+      const ratioA = duration / (127 / this.sampleRate);
+      const ratioB = duration / (128 / this.sampleRate);
+      console.log(`Ratio: ${ratioA}  ${ratioB}`);
     }
 
     this.currentFrame += ts.length;

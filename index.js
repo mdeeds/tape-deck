@@ -40,7 +40,6 @@ class CanvasCircle extends EventTarget {
 
     this.totalRadiansMoved = 0;
     this.lastDispatchTime = window.performance.now();
-    this.lastDispatchedTapeTime = 0;
   }
 
   getMouseOffsetFromCenter(event) {
@@ -61,7 +60,7 @@ class CanvasCircle extends EventTarget {
     this.ctx.fillStyle = 'red';
     this.ctx.fill();
     this.ctx.fillStyle = 'white';
-    const tapeTime = this.totalRadiansMoved / (3.0 * 2.0 * Math.PI);
+    const tapeTime = this.totalRadiansMoved * 3.0 / (2.0 * Math.PI);
     this.ctx.fillText(`${Math.round(tapeTime * 100) / 100}`,
       this.centerX, this.centerY);
   }
@@ -69,8 +68,10 @@ class CanvasCircle extends EventTarget {
   handleMouseDown(event) {
     console.log('down');
     const { dx, dy } = this.getMouseOffsetFromCenter(event);
-
     const distance = Math.sqrt(dx * dx + dy * dy);
+    this.circleX = this.centerX + dx;
+    this.circleY = this.centerY + dy;
+
     if (distance <= this.radius) {
       console.log('dragging')
       this.isDragging = true;
@@ -104,22 +105,20 @@ class CanvasCircle extends EventTarget {
   }
 
   _dispatchTapeTime() {
+    const newDispatchTime = window.performance.now();
+    const deltaTime = newDispatchTime - this.lastDispatchTime;
+    if (deltaTime < 0.5) {
+      // Don't send updates too frequently.
+      return;
+    }
+
     // Typical reel sizes are 7, 10.5, and 14 inches
     // Typical tape speeds are 3.75, 7.5, 15, and 30 inches per second
     // Assuming 7" reel and 7.5 inches per second, gives us about 3 seconds per rotation.
-
-    const newDispatchTime = window.performance.now();
-    const deltaTime = newDispatchTime - this.lastDispatchTime;
     const tapeTime = 3.0 * (this.totalRadiansMoved / 2.0 / Math.PI);
-    // Get 50% of the way there in 500ms
-    const alpha = Math.pow(0.5, deltaTime / 500.0);
-    const smoothedTapeTime = alpha * this.lastDispatchedTapeTime + (1 - alpha) * tapeTime;
-
     this.lastDispatchTime = newDispatchTime;
-    this.lastDispatchedTapeTime = smoothedTapeTime;
-
     const reelMovedEvent = new CustomEvent('reelMoved', {
-      detail: { tapeTime: smoothedTapeTime }
+      detail: { tapeTime }
     });
     this.dispatchEvent(reelMovedEvent);
   }
@@ -358,9 +357,11 @@ class Main {
 
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
+        deviceId: 'default',
+        echoCancellation: false,
+        noiseSuppression: false,
         autoGainControl: false,
-        echoCancelation: false,
-        noiseSuppresion: false,
+        latencyHint: 'low',
       }
     });
     const source = this.audioContext.createMediaStreamSource(stream);
@@ -414,7 +415,7 @@ class Main {
       const tapeTime = event.detail.tapeTime;
       const oldValue = t.value;
       if (Math.abs(oldValue - tapeTime) > 0.1) {
-        t.linearRampToValueAtTime(tapeTime, nowTime + Math.abs(oldValue - tapeTime));
+        t.linearRampToValueAtTime(tapeTime, nowTime + 0.5);
         // console.log(`Ramp to ${tapeTime}`);
       }
     });
