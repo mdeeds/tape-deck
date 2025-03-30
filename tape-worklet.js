@@ -8,7 +8,6 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return [
       {
-
         name: 't',
         description: 'The time index into the tape buffer in seconds.',
         defaultValue: 0,
@@ -33,6 +32,9 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
         this.isRecording = false;
       }
     };
+
+    this.currentFrame = 0;
+    this.lastReportTime = 0;
 
     this.tValues = new Float32Array(128);
   }
@@ -80,6 +82,18 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
       this.tValues.fill(t[0]);
       ts = this.tValues;
     }
+    const currentTime = this.currentFrame / this.sampleRate;
+    if (currentTime - this.lastReportTime > 1) {
+      this.lastReportTime = currentTime;
+      const startValue = ts[0];
+      const endTime = ts[ts.length - 1];
+      const duration = endTime - startValue;
+      const ratio = duration / (127 / this.sampleRate);
+      console.log(`Ratio: ${ratio}`);
+    }
+
+    this.currentFrame += ts.length;
+
     if (this.isRecording) {
       return this._record(ts, inputs);
     } else {
