@@ -21,6 +21,7 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.sampleRate = sampleRate;
+    this.latencyFrames = 0;
     this.buffer = new Float32Array(this.sampleRate * 300); // 5 minutes
     this.bufferIndex = 0;
     this.isRecording = false;
@@ -30,6 +31,9 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
         this.isRecording = true;
       } else if (event.data.type === 'play') {
         this.isRecording = false;
+      } else if (event.data.type === 'latency') {
+        this.latencyFrames = Math.round(this.sampleRate * event.data.value);
+        console.log(`Latency: ${event.data.value}`);
       }
     };
 
@@ -70,7 +74,11 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
     if (inputs[0].length === 0) { return; }
     const channel = inputs[0][0];
     for (let i = 0; i < ts.length; ++i) {
-      this.buffer[Math.round(ts[i] * this.sampleRate)] = channel[i];
+      let index = Math.round(ts[i] * this.sampleRate) - this.latencyFrames;
+      if (index < 0) {
+        index = 0;
+      }
+      this.buffer[index] = channel[i];
     }
     return true;
   }
@@ -90,7 +98,6 @@ class TapeWorkletProcessor extends AudioWorkletProcessor {
       const duration = endValue - startValue;
       const ratioA = duration / (127 / this.sampleRate);
       const ratioB = duration / (128 / this.sampleRate);
-      console.log(`Ratio: ${ratioA}  ${ratioB}`);
     }
 
     this.currentFrame += ts.length;

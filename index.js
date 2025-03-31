@@ -305,7 +305,7 @@ class VUMeter {
 }
 
 class Track extends EventTarget {
-  constructor(container, source) {
+  constructor(container, source, latency) {
     super();
     this.container = container;
     this.audioContext = source.context;
@@ -317,6 +317,7 @@ class Track extends EventTarget {
       console.log('message from worklet', event.data);
     };
     this.tapeWorkletNode.port.postMessage({ type: 'play' });
+    this.tapeWorkletNode.port.postMessage({ type: 'latency', value: latency })
 
     this.div = document.createElement('div');
     this.div.style.width = '100px';
@@ -366,6 +367,7 @@ class Track extends EventTarget {
   }
 
   stop(tapeTime) {
+    this.disarm();
     const t = this.tapeWorkletNode.parameters.get('t');
     t.cancelScheduledValues(this.audioContext.currentTime);
     t.value = tapeTime;
@@ -373,15 +375,17 @@ class Track extends EventTarget {
 }
 
 class TrackManager {
-  constructor(trackCount, reel, container, source) {
+  constructor(trackCount, reel, container, source, initialLatency) {
     this.tracks = [];
     this.reel = reel;
     this.audioContext = source.context;
+    this.latency = initialLatency;
+    this.initialLatency = initialLatency;
 
     this.motorEngaged = false;
 
     for (let i = 0; i < trackCount; i++) {
-      const track = new Track(container, source);
+      const track = new Track(container, source, initialLatency);
       this.tracks.push(track);
       track.addEventListener('armed', (event) => {
         for (const t of this.tracks) {
@@ -421,6 +425,31 @@ class TrackManager {
         this._stopAllTracks(tapeTime, nowTime)
       }
     });
+
+    this.latencySlider = document.createElement('input');
+    this.latencySlider.type = 'range';
+    this.latencySlider.min = '0';
+    this.latencySlider.max = '100';
+    // 0.11 seems to be about right.
+    this.latencySlider.value = 11;
+    this.latencySlider.style.width = '200px';
+    this.latencySlider.addEventListener('input', () => {
+      this.latency = this.latencySlider.value / 100.0;
+      console.log(`Latency set to ${this.latency} seconds.`);
+      for (const track of this.tracks) {
+        track.tapeWorkletNode.port.postMessage({ type: 'latency', value: this.latency });
+      }
+    });
+    const latencyLabel = document.createElement('label');
+    latencyLabel.textContent = 'Latency: ';
+    latencyLabel.appendChild(this.latencySlider);
+    const latencyDiv = document.createElement('div');
+    latencyDiv.appendChild(latencyLabel);
+    document.body.appendChild(latencyDiv);
+
+    for (const track of this.tracks) {
+      track.tapeWorkletNode.port.postMessage({ type: 'latency', value: this.latency });
+    }
   }
 
   _stopAllTracks(tapeTime, nowTime) {
@@ -446,6 +475,11 @@ class TrackManager {
 class Main {
   constructor() {
     this.audioContext = new AudioContext();
+    this.playbackLatency = this.audioContext.baseLatency;
+    // Initialize the recording latency to be the same as the playback
+    // latency. This is a good guess, but if we have another number
+    // from the media stream, we should use that.
+    this.recordLatency = this.audioContext.baseLatency;
     this._init();
   }
 
@@ -479,8 +513,14 @@ class Main {
       }
     });
     this.source = this.audioContext.createMediaStreamSource(stream);
+    // Get the input latency from the MediaStreamTrack
+    const audioTrack = stream.getAudioTracks()[0];
+    const capabilities = audioTrack.getCapabilities();
+    if (capabilities && capabilities.latency) {
+      this.recordLatency = capabilities.latency.max;
+      console.log("Input Latency (from capabilities):", this.inputLatency);
+    }
 
-    new Monitor(this.source);
     new VUMeter(this.source, document.body);
   }
 
@@ -490,7 +530,11 @@ class Main {
     tracksContainer.style.display = 'flex';
     tracksContainer.style.flexWrap = 'wrap';
     tracksContainer.style.width = '900px'; // Adjust as needed
-    this.tracks = new TrackManager(14, this.leftReelCanvasCircle, tracksContainer, this.source);
+    console.log(`Total latency = ${this.playbackLatency + this.recordLatency} seconds.`);
+    console.log(`Playback latency = ${this.playbackLatency} seconds.`);
+    console.log(`Record latency = ${this.recordLatency} seconds.`);
+    this.tracks = new TrackManager(14, this.leftReelCanvasCircle, tracksContainer, this.source,
+      this.playbackLatency + this.recordLatency);
   }
 }
 
