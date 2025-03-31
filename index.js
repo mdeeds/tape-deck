@@ -263,8 +263,8 @@ class VUMeter {
     this.inputNode = inputNode;
     this.div = div;
     this.canvas = document.createElement('canvas');
-    this.canvas.width = 50;
-    this.canvas.height = 50;
+    this.canvas.width = 150;
+    this.canvas.height = 75;
     this.div.appendChild(this.canvas);
 
     this.analyser = this.audioContext.createAnalyser();
@@ -289,29 +289,43 @@ class VUMeter {
     if (amplitude > 0) {
       dbs = Math.max(-40, 20 * Math.log10(amplitude));
     }
-    dbs = Math.max(this.previousDb - 1, dbs);
+    dbs = Math.max(this.previousDb - 0.1, dbs);
     this.previousDb = dbs;
-    const angle = (dbs + 40) / 80 * Math.PI / 3 - Math.PI / 3;
+
+    const minDbs = -20;
+    const maxDbs = 8;
+    const range = maxDbs - minDbs;
+    const p = (dbs - minDbs) / range;
+
+    const minAngle = Math.PI * 2 / 3;
+    const maxAngle = Math.PI / 3;
+
+    const angle = minAngle + p * (maxAngle - minAngle);
     const radius = this.canvas.height * 0.9;
-    const x = this.canvas.width / 2 + Math.sin(angle) * radius;
-    const y = this.canvas.height - Math.cos(angle) * radius;
+    const x = this.canvas.width / 2 + Math.cos(angle) * radius;
+    const y = this.canvas.height - Math.sin(angle) * radius;
     this.ctx.beginPath();
     this.ctx.moveTo(this.canvas.width / 2, this.canvas.height);
     this.ctx.lineTo(x, y);
     this.ctx.strokeStyle = 'red';
     this.ctx.stroke();
+
+    this.ctx.fillStyle = 'white';
+    this.ctx.fillText(`${Math.round(dbs)} dB`,
+      this.canvas.width / 2, this.canvas.height / 2);
+
     requestAnimationFrame(this._drawCanvas.bind(this));
   }
 }
 
 class Track extends EventTarget {
-  constructor(container, source, latency) {
+  constructor(container, source, destination, latency) {
     super();
     this.container = container;
     this.audioContext = source.context;
     this.tapeWorkletNode = new AudioWorkletNode(
       this.audioContext, 'tape-worklet-processor');
-    this.tapeWorkletNode.connect(this.audioContext.destination);
+    this.tapeWorkletNode.connect(destination);
     source.connect(this.tapeWorkletNode);
     this.tapeWorkletNode.port.onmessage = (event) => {
       console.log('message from worklet', event.data);
@@ -360,6 +374,9 @@ class Track extends EventTarget {
   }
 
   forward(nowTime, tapeTime) {
+    if (this.div.classList.contains('armed')) {
+      this.div.classList.add('content');
+    }
     const t = this.tapeWorkletNode.parameters.get('t');
     t.cancelScheduledValues(nowTime);
     t.value = tapeTime;
@@ -375,7 +392,7 @@ class Track extends EventTarget {
 }
 
 class TrackManager {
-  constructor(trackCount, reel, container, source, initialLatency) {
+  constructor(trackCount, reel, container, source, destination, initialLatency) {
     this.tracks = [];
     this.reel = reel;
     this.audioContext = source.context;
@@ -385,7 +402,7 @@ class TrackManager {
     this.motorEngaged = false;
 
     for (let i = 0; i < trackCount; i++) {
-      const track = new Track(container, source, initialLatency);
+      const track = new Track(container, source, destination, initialLatency);
       this.tracks.push(track);
       track.addEventListener('armed', (event) => {
         for (const t of this.tracks) {
@@ -433,18 +450,18 @@ class TrackManager {
     // 0.11 seems to be about right.
     this.latencySlider.value = 11;
     this.latencySlider.style.width = '200px';
+    const latencyLabel = document.createElement('label');
+    latencyLabel.textContent = 'Latency: ';
     this.latencySlider.addEventListener('input', () => {
       this.latency = this.latencySlider.value / 100.0;
-      console.log(`Latency set to ${this.latency} seconds.`);
+      latencyLabel.textContent = `Latency: ${this.latency * 1000}ms`;
       for (const track of this.tracks) {
         track.tapeWorkletNode.port.postMessage({ type: 'latency', value: this.latency });
       }
     });
-    const latencyLabel = document.createElement('label');
-    latencyLabel.textContent = 'Latency: ';
-    latencyLabel.appendChild(this.latencySlider);
     const latencyDiv = document.createElement('div');
     latencyDiv.appendChild(latencyLabel);
+    latencyDiv.appendChild(this.latencySlider);
     document.body.appendChild(latencyDiv);
 
     for (const track of this.tracks) {
@@ -488,7 +505,6 @@ class Main {
     const buttonContainer = document.getElementById('buttons');
 
     // Create the buttons
-    const stopButton = createButton('Stop', 'stopButton', buttonContainer);
     const playButton = createButton('Play', 'playButton', buttonContainer);
     // Append the container to the body
     document.body.appendChild(buttonContainer);
@@ -498,6 +514,36 @@ class Main {
 
     await this._initAudio();
     this._createTracks();
+  }
+
+
+  _createGainSlider(buttonContainer, sourceElement, name) {
+    const gainNode = this.audioContext.createGain();
+    if (sourceElement) {
+      sourceElement.connect(gainNode);
+    }
+
+    const gainSliderElement = document.createElement('input');
+    gainSliderElement.type = 'range';
+    gainSliderElement.min = '-30';
+    gainSliderElement.max = '50';
+    gainSliderElement.value = '0';
+    gainSliderElement.style.width = '200px';
+    gainSliderElement.addEventListener('input', () => {
+      const gain = gainSliderElement.value;
+      gainLabelElement.textContent = `${name}: ${gain} dB`;
+      gainNode.gain.value = Math.pow(10, gain / 20);
+    });
+    const gainLabelElement = document.createElement('label');
+    gainLabelElement.textContent = `${name}: 0 dB`;
+    gainLabelElement.style.width = '100px';
+    gainLabelElement.style.display = 'inline-block';
+    const gainDiv = document.createElement('div');
+    gainDiv.appendChild(gainLabelElement);
+    gainDiv.appendChild(gainSliderElement);
+    buttonContainer.appendChild(gainDiv);
+
+    return gainNode;
   }
 
   async _initAudio() {
@@ -521,7 +567,12 @@ class Main {
       console.log("Input Latency (from capabilities):", this.inputLatency);
     }
 
-    new VUMeter(this.source, document.body);
+    const buttonContainer = document.getElementById('buttons');
+
+    this.sourceGain = this._createGainSlider(buttonContainer, this.source, 'Gain');
+    new VUMeter(this.sourceGain, buttonContainer);
+    this.volumeGain = this._createGainSlider(buttonContainer, null, 'Volume');
+    this.volumeGain.connect(this.audioContext.destination);
   }
 
   _createTracks() {
@@ -533,7 +584,8 @@ class Main {
     console.log(`Total latency = ${this.playbackLatency + this.recordLatency} seconds.`);
     console.log(`Playback latency = ${this.playbackLatency} seconds.`);
     console.log(`Record latency = ${this.recordLatency} seconds.`);
-    this.tracks = new TrackManager(14, this.leftReelCanvasCircle, tracksContainer, this.source,
+    this.tracks = new TrackManager(14, this.leftReelCanvasCircle, tracksContainer,
+      this.sourceGain, this.volumeGain,
       this.playbackLatency + this.recordLatency);
   }
 }

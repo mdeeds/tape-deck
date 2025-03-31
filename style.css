@@ -110,6 +110,10 @@ body {
   background-blend-mode: overlay;
 }
 
+.content {
+  background-color: #862;
+}
+
 .armed {
   background-color: #822;
 }
