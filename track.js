@@ -6,7 +6,7 @@ class Track extends EventTarget {
     this.audioContext = source.context;
     this.tapeWorkletNode = new AudioWorkletNode(
       this.audioContext, 'tape-worklet-processor');
-    this.tapeWorkletNode.connect(destination);
+    // this.tapeWorkletNode.connect(destination);
     source.connect(this.tapeWorkletNode);
     this.tapeWorkletNode.port.onmessage = (event) => {
       console.log('message from worklet', event.data);
@@ -72,6 +72,67 @@ class Track extends EventTarget {
   }
 }
 
+class OutputEffectManager {
+  constructor(audioContext) {
+    this.audioContext = audioContext;
+    this.effects = [];
+    this.effects.push(this._makeLowPass(60));
+    this.effects.push(this._makeLowPass(120));
+    this.effects.push(this._makePan(-0.7));
+    this.effects.push(this._makeNop());
+    this.effects.push(this._makePan(0.7));
+    this.effects.push(this._makeHighPass(480));
+    this.effects.push(this._makeHighPass(960));
+
+    this.previousConnections = new Map();
+  }
+
+  _makeNop() {
+    const nop = this.audioContext.createGain();
+    nop.connect(this.audioContext.destination);
+    return nop;
+  }
+
+  _makeLowPass(cutoff) {
+    const lowPassFilter = this.audioContext.createBiquadFilter();
+    lowPassFilter.type = 'lowpass';
+    lowPassFilter.frequency.value = cutoff;
+    lowPassFilter.connect(this.audioContext.destination);
+    return lowPassFilter
+  }
+
+  _makeHighPass(cutoff) {
+    const highPassFilter = this.audioContext.createBiquadFilter();
+    highPassFilter.type = 'highpass';
+    highPassFilter.frequency.value = cutoff;
+    highPassFilter.connect(this.audioContext.destination);
+    return highPassFilter
+  }
+
+  _makePan(pan) {
+    const panner = this.audioContext.createStereoPanner();
+    panner.pan.value = pan;
+    panner.connect(this.audioContext.destination);
+    return panner;
+  }
+
+  reconnect(sources) {
+    const numSources = Math.min(sources.length, this.effects.length);
+    for (let i = 0; i < numSources; i++) {
+      const source = sources[i];
+      const effect = this.effects[i];
+      if (this.previousConnections.has(source)) {
+        if (this.previousConnections.get(source) === effect) {
+          continue;
+        }
+        source.disconnect(this.previousConnections.get(source));
+      }
+      source.connect(effect);
+      this.previousConnections.set(source, effect);
+    }
+  }
+}
+
 class TrackManager {
   constructor(trackCount, reel, container, source, destination, initialLatency) {
     this.tracks = [];
@@ -80,10 +141,14 @@ class TrackManager {
     this.latency = initialLatency;
     this.initialLatency = initialLatency;
 
+    this.effectsManager = new OutputEffectManager(this.audioContext);
+    this.sources = [];
+
     this.motorEngaged = false;
 
     for (let i = 0; i < trackCount; i++) {
       const track = new Track(container, source, destination, initialLatency);
+      this.sources.push(track.tapeWorkletNode);
       this.tracks.push(track);
       track.addEventListener('armed', (event) => {
         for (const t of this.tracks) {
@@ -92,7 +157,11 @@ class TrackManager {
           }
         }
       });
+      // Drag and drop handling
+      this._addDragDropHandler(track.div, i);
     }
+
+    this.effectsManager.reconnect(this.sources);
 
     this._updateReel();
 
@@ -148,6 +217,42 @@ class TrackManager {
     for (const track of this.tracks) {
       track.tapeWorkletNode.port.postMessage({ type: 'latency', value: this.latency });
     }
+  }
+
+  _swap(arr, i, j) {
+    if (i < 0 || j < 0 || i >= arr.length || j >= arr.length) {
+      return;
+    }
+    if (i === j) {
+      return;
+    }
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+
+  _addDragDropHandler(div, i) {
+    div.style.order = i;
+    div.draggable = true;
+    div.innerHTML = `<b>${i}</b>`;
+    div.addEventListener('dragstart', (event) => {
+      console.log(`Start: ${div.style.order}`);
+      event.dataTransfer.setData('text/plain', div.style.order.toString());
+    });
+    div.addEventListener('dragover', (event) => {
+      event.preventDefault();
+    });
+    div.addEventListener('drop', (event) => {
+      const index = parseInt(event.dataTransfer.getData('text/plain'));
+      console.log(`Drop onto ${div.style.order} ; source: ${index}`)
+      event.preventDefault();
+      this._swap(this.tracks, div.style.order, index);
+      this._swap(this.sources, div.style.order, index)
+      for (let j = 0; j < this.tracks.length; j++) {
+        this.tracks[j].div.style.order = j;
+      }
+      this.effectsManager.reconnect(this.sources);
+    });
   }
 
   _stopAllTracks(tapeTime, nowTime) {
